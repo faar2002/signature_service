@@ -1,6 +1,13 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import TransaccionFirma
+from .models import AplicacionAutorizada, TransaccionFirma
+
+@admin.register(AplicacionAutorizada)
+class AplicacionAutorizadaAdmin(admin.ModelAdmin):
+    list_display = ('nombre_app', 'system_name', 'system_token', 'is_active', 'rate_limit', 'fecha_creacion')
+    list_filter = ('is_active', 'fecha_creacion')
+    search_fields = ('nombre_app', 'system_name', 'system_token')
+    readonly_fields = ('fecha_creacion',)
 
 
 @admin.register(TransaccionFirma)
