@@ -1,0 +1,37 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Firma Exitosa - {{ transaccion.id_documento_externo }}</title>
+    <link rel="stylesheet" href="{% static 'css/estilos_transacciones.css' %}">
+</head>
+<body>
+
+<div class="dashboard-container" style="max-width: 800px; text-align: center; margin-top: 40px;">
+    <div class="card-table" style="padding: 35px;">
+        <h1 style="color: var(--success-color); margin-bottom: 10px;">¡Documento Firmado Exitosamente!</h1>
+        <p style="color: var(--text-muted);">El proceso de firma digital se ha completado correctamente.</p>
+
+        <div style="background: #f8fafc; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin: 20px 0; text-align: left;">
+            <p style="margin: 5px 0;"><strong>ID Documento:</strong> {{ transaccion.id_documento_externo }}</p>
+            <p style="margin: 5px 0;"><strong>Firmante:</strong> {{ transaccion.nombre_firmante }}</p>
+            <p style="margin: 5px 0;"><strong>Correo:</strong> {{ transaccion.email_firmante }}</p>
+        </div>
+
+        {% if transaccion.pdf_firmado %}
+        <div style="width: 100%; height: 400px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-bottom: 20px;">
+            <embed src="{{ transaccion.pdf_firmado.url }}" type="application/pdf" width="100%" height="100%">
+        </div>
+
+        <a href="{{ transaccion.pdf_firmado.url }}" download="Firmado_{{ transaccion.id_documento_externo }}.pdf" class="btn btn-primary" style="background-color: var(--success-color);">
+            📥 Descargar PDF Firmado
+        </a>
+        {% endif %}
+
+        <a href="{% url 'solicitar_firma' %}" class="btn btn-secondary" style="margin-left: 10px;">Volver al Dashboard</a>
+    </div>
+</div>
+
+</body>
+</html>

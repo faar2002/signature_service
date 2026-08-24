@@ -1,0 +1,298 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proceso de Firma Digital</title>
+    <link rel="stylesheet" href="{% static 'css/estilos_transacciones.css' %}">
+    
+    <!-- Google Fonts para previsualización en vivo de firmas -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Alex+Brush&family=Dancing+Script:wght@600&family=Great+Vibes&family=Montserrat:ital,wght@1,600&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+    <script src="{% static 'js/transacciones.js' %}"></script>
+
+    <style>
+        .font-preview {
+            font-size: 2.2rem;
+            padding: 20px;
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            background: #ffffff;
+            color: #0f196e;
+            min-height: 90px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 15px;
+            word-break: break-all;
+        }
+        
+        .font-cursiva { font-family: 'Dancing Script', cursive; }
+        .font-elegante { font-family: 'Great Vibes', cursive; }
+        .font-clasica { font-family: 'Alex Brush', cursive; }
+        .font-formal { font-family: 'Montserrat', sans-serif; font-style: italic; }
+
+        .btn-tab {
+            flex: 1;
+            padding: 10px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container" style="max-width: 800px;" data-otp-validado="{{ otp_validado|yesno:'true,false' }}">
+    
+    <!-- PASO 1: VALIDACIÓN DE CÓDIGO OTP -->
+    <div id="paso-otp" class="otp-card" {% if otp_validado %}style="display: none;"{% endif %}>
+        <h2>Verificación de Identidad</h2>
+        <p>Se ha enviado un código OTP a <strong>{{ transaccion.email_firmante }}</strong>.</p>
+
+        <div id="error-otp-banner" class="error-banner" style="display: none;"></div>
+
+        <form id="formOTP">
+            <div class="form-group" style="text-align: left;">
+                <label for="otp_input">Ingrese el código OTP de 6 dígitos:</label>
+                <input type="text" id="otp_input" class="input-control" maxlength="6" style="font-size: 1.2rem; text-align: center; letter-spacing: 4px;" required>
+            </div>
+            <button type="submit" id="btnValidarOTP" class="btn btn-primary" style="width: 100%;">Validar Código</button>
+        </form>
+    </div>
+
+    <!-- PASO 2: LIENZO DE FIRMA Y VISOR DE PDF -->
+    <div id="paso-firma" {% if not otp_validado %}style="display: none;"{% endif %}>
+        <div class="header-title" style="margin-bottom: 20px;">
+            <h2>Firma de Documento</h2>
+            <p>Firmante: <strong>{{ transaccion.nombre_firmante }}</strong> | Doc: <strong>{{ transaccion.id_documento_externo }}</strong></p>
+        </div>
+
+        <!-- Visor de PDF con iframe para evitar rechazo de conexión -->
+        <div style="width: 100%; height: 450px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-bottom: 20px; background: #f8fafc;">
+            {% if pdf_url_absoluta or transaccion.pdf_original %}
+                <iframe src="{{ pdf_url_absoluta|default:transaccion.pdf_original.url }}" width="100%" height="100%" style="border: none;">
+                    <p>Tu navegador no permite la previsualización directa. 
+                        <a href="{{ pdf_url_absoluta|default:transaccion.pdf_original.url }}" target="_blank">Abrir PDF original</a>.
+                    </p>
+                </iframe>
+            {% else %}
+                <p style="text-align: center; padding-top: 200px; color: var(--text-muted);">No se encontró el archivo PDF original.</p>
+            {% endif %}
+        </div>
+
+        <!-- TARJETA DE FIRMA (DIBUJO O TIPOGRAFÍA) -->
+        <div class="card-table" style="padding: 20px;">
+            
+            <!-- Selector de Modos -->
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <button type="button" class="btn btn-primary btn-tab" id="btnTabDibujo" onclick="toggleModo('dibujo')">✏️ Dibujar Trazo</button>
+                <button type="button" class="btn btn-secondary btn-tab" id="btnTabTexto" onclick="toggleModo('texto')">🔤 Escribir Nombre</button>
+            </div>
+
+            <!-- MODO 1: DIBUJO A MANO ALZADA -->
+            <div id="sec-dibujo" style="text-align: center;">
+                <p style="margin-top: 0; color: var(--text-muted);">Dibuje su firma en el recuadro a continuación:</p>
+                <div style="display: inline-block; border: 2px dashed var(--border-color); border-radius: 8px; background: white;">
+                    <canvas id="signature-pad" width="500" height="180"></canvas>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button type="button" id="btnClear" class="btn btn-secondary btn-sm">Limpiar Trazo</button>
+                </div>
+            </div>
+
+            <!-- MODO 2: TIPOGRAFÍA SELECCIONABLE -->
+            <div id="sec-texto" style="display: none; text-align: left;">
+                <div class="form-group">
+                    <label for="input-nombre-firma">Nombre a Estampar:</label>
+                    <input type="text" id="input-nombre-firma" class="input-control" value="{{ transaccion.nombre_firmante }}" oninput="actualizarPreview()">
+                </div>
+
+                <div class="form-group" style="margin-top: 15px;">
+                    <label for="select-estilo">Estilo de Letra:</label>
+                    <select id="select-estilo" class="input-control" onchange="actualizarPreview()">
+                        <option value="cursiva">Dancing Script (Cursiva Moderna)</option>
+                        <option value="elegante">Great Vibes (Caligrafía Elegante)</option>
+                        <option value="clasica">Alex Brush (Firma Clásica)</option>
+                        <option value="formal">Montserrat (Formal / Moderno)</option>
+                    </select>
+                </div>
+
+                <!-- Previsualización de Firma en Vivo -->
+                <div id="preview-firma" class="font-preview font-cursiva">
+                    {{ transaccion.nombre_firmante }}
+                </div>
+            </div>
+
+            <div style="margin-top: 25px; text-align: center;">
+                <button type="button" id="btnEstampar" class="btn btn-primary" style="width: 100%; font-size: 1.1rem; padding: 12px;">Estampar Firma en PDF</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const uuidTransaccion = "{{ transaccion.uuid }}";
+    const csrftoken = typeof getCookie === 'function' ? getCookie('csrftoken') : '';
+    const otpValidado = document.querySelector('.dashboard-container').dataset.otpValidado === 'true';
+
+    let modoActual = 'dibujo';
+    let signaturePad = null;
+
+    // Alternar entre dibujo y texto
+    function toggleModo(modo) {
+        modoActual = modo;
+        if (modo === 'dibujo') {
+            document.getElementById('sec-dibujo').style.display = 'block';
+            document.getElementById('sec-texto').style.display = 'none';
+            document.getElementById('btnTabDibujo').className = 'btn btn-primary btn-tab';
+            document.getElementById('btnTabTexto').className = 'btn btn-secondary btn-tab';
+            initSignaturePad();
+        } else {
+            document.getElementById('sec-dibujo').style.display = 'none';
+            document.getElementById('sec-texto').style.display = 'block';
+            document.getElementById('btnTabDibujo').className = 'btn btn-secondary btn-tab';
+            document.getElementById('btnTabTexto').className = 'btn btn-primary btn-tab';
+            actualizarPreview();
+        }
+    }
+
+    // Actualizar vista previa del texto
+    function actualizarPreview() {
+        const texto = document.getElementById('input-nombre-firma').value || 'Su Nombre Aquí';
+        const estilo = document.getElementById('select-estilo').value;
+        const preview = document.getElementById('preview-firma');
+        
+        preview.textContent = texto;
+        preview.className = 'font-preview font-' + estilo;
+    }
+
+    // Inicializar SignaturePad
+    function initSignaturePad() {
+        const canvas = document.getElementById('signature-pad');
+        if (canvas && !signaturePad) {
+            signaturePad = new SignaturePad(canvas, { penColor: 'rgb(15, 25, 110)' });
+            document.getElementById('btnClear').onclick = () => signaturePad.clear();
+        }
+    }
+
+    // Generar OTP automáticamente si no está validado previamente
+    if (!otpValidado) {
+        document.addEventListener("DOMContentLoaded", async () => {
+            try {
+                await fetch('/api/v1/otp/solicitar/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: JSON.stringify({ uuid_transaccion: uuidTransaccion })
+                });
+            } catch (err) {
+                console.error("Error solicitando OTP inicial:", err);
+            }
+        });
+    }
+
+    // Manejo de Validación de OTP
+    const formOTP = document.getElementById('formOTP');
+    if (formOTP) {
+        formOTP.onsubmit = async function(e) {
+            e.preventDefault();
+            const codigo = document.getElementById('otp_input').value;
+            const errorBanner = document.getElementById('error-otp-banner');
+            
+            try {
+                const response = await fetch('/api/v1/otp/validar/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: JSON.stringify({
+                        uuid_transaccion: uuidTransaccion,
+                        otp_code: codigo
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.valid) {
+                    document.getElementById('paso-otp').style.display = 'none';
+                    document.getElementById('paso-firma').style.display = 'block';
+                    initSignaturePad();
+                } else {
+                    errorBanner.style.display = 'block';
+                    errorBanner.textContent = data.message || "Código inválido o expirado.";
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Error de conexión al validar el código OTP.");
+            }
+        };
+    }
+
+    if (document.getElementById('paso-firma').style.display !== 'none') {
+        initSignaturePad();
+    }
+
+    // Enviar Firma Estampada (Soporta Dibujo y Texto)
+    document.getElementById('btnEstampar').onclick = async function() {
+        const payload = new URLSearchParams();
+        payload.append('metodo_firma', modoActual);
+
+        if (modoActual === 'dibujo') {
+            if (!signaturePad || signaturePad.isEmpty()) {
+                alert("Por favor realice su firma en el recuadro.");
+                return;
+            }
+            payload.append('base64_image', signaturePad.toDataURL('image/png'));
+        } else {
+            const texto = document.getElementById('input-nombre-firma').value;
+            if (!texto.trim()) {
+                alert("Por favor ingrese el nombre a estampar.");
+                return;
+            }
+            payload.append('texto_nombre', texto);
+            payload.append('estilo_fuente', document.getElementById('select-estilo').value);
+        }
+
+        this.disabled = true;
+        this.textContent = "Estampando firma...";
+
+        try {
+            const response = await fetch(`/firmar/${uuidTransaccion}/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': csrftoken
+                },
+                body: payload
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.status === 'success') {
+                alert("¡Documento firmado exitosamente!");
+                window.location.href = `/exito/${uuidTransaccion}/`;
+            } else {
+                alert("Error al procesar la firma: " + (data.message || "Falla del servidor"));
+                this.disabled = false;
+                this.textContent = "Estampando firma...";
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Error de conexión al procesar la firma.");
+            this.disabled = false;
+            this.textContent = "Estampando firma...";
+        }
+    };
+</script>
+
+</body>
+</html>

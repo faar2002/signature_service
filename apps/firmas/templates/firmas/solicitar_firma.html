@@ -1,0 +1,249 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Gestión de Firmas Digitales</title>
+    <link rel="stylesheet" href="{% static 'css/estilos_transacciones.css' %}">
+    <script src="{% static 'js/transacciones.js' %}"></script>
+    <style>
+        .tabs-nav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--border-color);
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .tab-btn.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    <div class="header-flex">
+        <div class="header-title">
+            <h1>Gestión de Firmas Digitales</h1>
+            <p>Monitorea solicitudes pendientes, consulta documentos firmados y crea nuevas transacciones.</p>
+        </div>
+        <button onclick="abrirModal()" class="btn btn-primary">+ Nueva Solicitud</button>
+    </div>
+
+    <!-- Navegación por Pestañas de Estado -->
+    <div class="tabs-nav">
+        <button class="tab-btn active" onclick="switchTab('pendientes')">
+            ⏳ Solicitudes Pendientes ({{ pendientes|length }})
+        </button>
+        <button class="tab-btn" onclick="switchTab('firmadas')">
+            ✅ Documentos Firmados ({{ firmadas|length }})
+        </button>
+    </div>
+
+    <!-- TABLA 1: SOLICITUDES PENDIENTES -->
+    <div id="tab-pendientes" class="tab-content active">
+        <div class="card-table">
+            <table class="table-custom">
+                <thead>
+                    <tr>
+                        <th>ID Documento</th>
+                        <th>Firmante</th>
+                        <th>Correo</th>
+                        <th>Fecha Creación</th>
+                        <th>Estado</th>
+                        <th>Acción</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in pendientes %}
+                    <tr>
+                        <td><strong>{{ t.id_documento_externo }}</strong></td>
+                        <td>{{ t.nombre_firmante }}</td>
+                        <td>{{ t.email_firmante }}</td>
+                        <td>{{ t.fecha_creacion|date:"d/m/Y H:i" }}</td>
+                        <td><span class="badge badge-pendiente">PENDIENTE</span></td>
+                        <td>
+                            <a href="{% url 'firmar' uuid_firma=t.uuid %}" class="btn btn-primary btn-sm">
+                                ✍️ Firmar Ahora
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6">
+                            <div class="empty-state">No hay solicitudes pendientes de firma por el momento.</div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- TABLA 2: DOCUMENTOS FIRMADOS -->
+    <div id="tab-firmadas" class="tab-content">
+        <div class="card-table">
+            <table class="table-custom">
+                <thead>
+                    <tr>
+                        <th>ID Documento</th>
+                        <th>Firmante</th>
+                        <th>Correo</th>
+                        <th>Fecha Firma</th>
+                        <th>Estado</th>
+                        <th>Documento Final</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in firmadas %}
+                    <tr>
+                        <td><strong>{{ t.id_documento_externo }}</strong></td>
+                        <td>{{ t.nombre_firmante }}</td>
+                        <td>{{ t.email_firmante }}</td>
+                        <td>{{ t.fecha_creacion|date:"d/m/Y H:i" }}</td>
+                        <td><span class="badge badge-firmado">FIRMADO</span></td>
+                        <td>
+                            {% if t.pdf_firmado %}
+                            <a href="{{ t.pdf_firmado.url }}" download="Firmado_{{ t.id_documento_externo }}.pdf" class="btn btn-secondary btn-sm" style="color: var(--success-color);">
+                                📥 Descargar PDF
+                            </a>
+                            {% else %}
+                            <a href="{% url 'exito' uuid_firma=t.uuid %}" class="btn btn-secondary btn-sm">
+                                👁️ Ver Detalle
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6">
+                            <div class="empty-state">Aún no se ha completado ningún proceso de firma.</div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- MODAL PARA NUEVA SOLICITUD -->
+    <div id="modalFirma" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Nueva Solicitud de Firma</h2>
+                <button onclick="cerrarModal()" class="close-btn">&times;</button>
+            </div>
+            
+            <form id="formNuevaFirma" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="id_doc">ID Documento Externo:</label>
+                    <input type="text" id="id_doc" name="id_documento_externo" class="input-control" placeholder="Ej: DOC-2026-100" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="nombre">Nombre del Firmante:</label>
+                    <input type="text" id="nombre" name="nombre_firmante" class="input-control" placeholder="Nombre completo" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Correo del Firmante:</label>
+                    <input type="email" id="email" name="email_firmante" class="input-control" placeholder="correo@ejemplo.com" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="pdf">Documento PDF:</label>
+                    <input type="file" id="pdf" name="pdf_original" accept="application/pdf" class="input-control" required>
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" onclick="cerrarModal()" class="btn btn-secondary">Cancelar</button>
+                    <button type="submit" id="btnGuardar" class="btn btn-primary">Crear y Enviar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Gestión del Modal
+    function abrirModal() { document.getElementById('modalFirma').style.display = 'block'; }
+    function cerrarModal() { 
+        document.getElementById('modalFirma').style.display = 'none'; 
+        document.getElementById('formNuevaFirma').reset();
+    }
+
+    // Alternar entre las pestañas (Pendientes / Firmadas)
+    function switchTab(tab) {
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+        if (tab === 'pendientes') {
+            document.querySelectorAll('.tab-btn')[0].classList.add('active');
+            document.getElementById('tab-pendientes').classList.add('active');
+        } else {
+            document.querySelectorAll('.tab-btn')[1].classList.add('active');
+            document.getElementById('tab-firmadas').classList.add('active');
+        }
+    }
+
+    // Envío del formulario vía AJAX
+    document.getElementById('formNuevaFirma').onsubmit = async function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('btnGuardar');
+        btn.disabled = true;
+        btn.textContent = "Procesando...";
+
+        const formData = new FormData(this);
+        const csrftoken = typeof getCookie === 'function' ? getCookie('csrftoken') : '';
+
+        try {
+            const response = await fetch('/api/v1/transacciones/crear/', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrftoken },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.status === 'success') {
+                cerrarModal();
+                // Redireccionar o recargar para ver la nueva solicitud en la lista
+                location.reload();
+            } else {
+                alert("Error: " + JSON.stringify(data.errors || data.message));
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Error de conexión al crear la transacción.");
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Crear y Enviar";
+        }
+    };
+</script>
+
+</body>
+</html>

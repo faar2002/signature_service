@@ -40,9 +40,6 @@ class CrearTransaccionAPIView(APIView):
 
 
 class SolicitarOTPAPIView(APIView):
-    """
-    POST: Solicita la generación y envío del OTP al microservicio.
-    """
     def post(self, request, *args, **kwargs):
         serializer = OTPSolicitarSerializer(data=request.data)
         if not serializer.is_valid():
@@ -51,13 +48,13 @@ class SolicitarOTPAPIView(APIView):
         uuid_trans = serializer.validated_data['uuid_transaccion']
         transaccion = get_object_or_404(TransaccionFirma, uuid=uuid_trans)
 
-        # Llamada al microservicio OTP
+        # Invocamos el servicio con el email y nombre del firmante
         respuesta_otp = otp_service.solicitar_codigo(
-            email=transaccion.email_firmante, 
-            app_source="ServicioFirma"
+            email=transaccion.email_firmante,
+            nombre=transaccion.nombre_firmante
         )
 
-        # Manejo de error si el servicio OTP retorna un string (ej. 404 correo suspendido)
+        # Si devolvió una cadena de texto, capturamos el error
         if isinstance(respuesta_otp, str):
             mensaje_error = "El servicio de OTP no está disponible."
             if '{"error":' in respuesta_otp:
@@ -74,14 +71,14 @@ class SolicitarOTPAPIView(APIView):
 
         return Response({
             "status": "success",
-            "message": "Código OTP enviado correctamente",
+            "message": "Código OTP solicitado correctamente",
             "data": respuesta_otp
         }, status=status.HTTP_200_OK)
 
 
 class ValidarOTPAPIView(APIView):
     """
-    POST: Valida si el código ingresado coincide con el enviado al correo.
+    POST: Valida el código OTP utilizando el microservicio externo.
     """
     def post(self, request, *args, **kwargs):
         serializer = OTPValidarSerializer(data=request.data)
@@ -92,14 +89,14 @@ class ValidarOTPAPIView(APIView):
         codigo = serializer.validated_data['otp_code']
         transaccion = get_object_or_404(TransaccionFirma, uuid=uuid_trans)
 
+        # Consumimos la validación con la clave 'otp' hacia /verify/
         es_valido = otp_service.validar_codigo(
             email=transaccion.email_firmante, 
-            codigo=codigo, 
-            app_source="ServicioFirma"
+            codigo=codigo
         )
 
         if es_valido:
-            # Marcamos en la sesión actual de Django que la transacción fue autenticada
+            # Guardamos la autorización en la sesión
             sesion_key = f"otp_validado_{transaccion.uuid}"
             request.session[sesion_key] = True
             request.session.modified = True
@@ -113,5 +110,5 @@ class ValidarOTPAPIView(APIView):
         return Response({
             "status": "error",
             "valid": False,
-            "message": "Código inválido o expirado."
+            "message": "Código OTP inválido o expirado."
         }, status=status.HTTP_400_BAD_REQUEST)

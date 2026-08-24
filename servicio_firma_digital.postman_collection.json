@@ -1,0 +1,191 @@
+{
+  "info": {
+    "_postman_id": "a8f3d1e2-5b9c-4d11-8f22-9900aabbccdd",
+    "name": "API Firma Digital Django",
+    "description": "Colección completa para probar el flujo de Firma Digital, OTP y Estampado PDF.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "uuid_transaccion",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Crear Transacción",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "    var jsonData = pm.response.json();",
+              "    if (jsonData.data && jsonData.data.uuid) {",
+              "        pm.collectionVariables.set(\"uuid_transaccion\", jsonData.data.uuid);",
+              "        console.log(\"UUID capturado automáticamente: \" + jsonData.data.uuid);",
+              "    }",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "nombre_firmante",
+              "value": "Francisco Aponte",
+              "type": "text"
+            },
+            {
+              "key": "email_firmante",
+              "value": "francisco@example.com",
+              "type": "text"
+            },
+            {
+              "key": "id_documento_externo",
+              "value": "DOC-2026-TEST",
+              "type": "text"
+            },
+            {
+              "key": "pdf_original",
+              "type": "file",
+              "src": []
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/transacciones/crear/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transacciones",
+            "crear",
+            ""
+          ]
+        },
+        "description": "Crea la transacción y captura automáticamente el UUID devuelto en las variables de la colección."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Solicitar Código OTP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"uuid_transaccion\": \"{{uuid_transaccion}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/otp/solicitar/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "otp",
+            "solicitar",
+            ""
+          ]
+        },
+        "description": "Solicita el envío del código OTP al microservicio externo."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Validar Código OTP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"uuid_transaccion\": \"{{uuid_transaccion}}\",\n  \"otp_code\": \"123456\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/otp/validar/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "otp",
+            "validar",
+            ""
+          ]
+        },
+        "description": "Valida los 6 dígitos del código OTP introducidos por el usuario."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Estampar Firma (Nombre)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "metodo_firma",
+              "value": "nombre",
+              "type": "text"
+            },
+            {
+              "key": "base64_image",
+              "value": "",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/firmar/{{uuid_transaccion}}/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "firmar",
+            "{{uuid_transaccion}}",
+            ""
+          ]
+        },
+        "description": "Ejecuta la vista que dibuja la firma con ReportLab y la mecha en el PDF usando PyPDF2."
+      },
+      "response": []
+    }
+  ]
+}
