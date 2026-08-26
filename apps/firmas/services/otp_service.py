@@ -14,47 +14,54 @@ class OTPService:
             "X-System-Token": self.system_token
         }
 
-    def solicitar_codigo(self, email, nombre):
-        """
-        Genera y envía el código OTP mediante el endpoint /generate/
-        """
+    def solicitar_codigo(self, email, nombre_firmante):
         url = f"{self.base_url}/generate/"
-        payload = {
-            "email": email,
-            "system_name": self.system_name,
-            "nombre": nombre
-        }
-
-        try:
-            response = requests.post(
-                url,
-                json=payload,
-                headers=self._get_headers(),
-                timeout=10
-            )
-
-            # Si la respuesta es exitosa (200 o 201)
-            if response.status_code in (200, 201):
-                return response.json()
-
-            # Si devuelve error controlado (ej: 400, 404 correo suspendido)
-            return f"Error en servicio OTP: {response.status_code} - {response.text}"
-
-        except requests.exceptions.RequestException as e:
-            return f"Error de conexión con servicio OTP: {str(e)}"
-
-    def validar_codigo(self, email, codigo):
-        """
-        Valida el código de 6 dígitos con el endpoint /verify/
-        """
-        url = f"{self.base_url}/verify/"
         
         headers = {
             "Content-Type": "application/json",
             "X-System-Token": self.system_token
         }
         
-        # Mapeo exacto según tu estructura
+        payload = {
+            "email": email,
+            "system_name": self.system_name,
+            "nombre": nombre_firmante
+        }
+
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            data = response.json() if response.content else {}
+
+           
+            if response.status_code in [200, 201]:
+                return {"status": "success", "data": data}
+
+            # CAPTURA ESPECÍFICA DE BLOQUEO (403 / "status": "BLOCKED")
+            if response.status_code == 403 or data.get("status") == "BLOCKED":
+                mensaje_error = data.get("error", "El correo se encuentra temporalmente bloqueado.")
+                retry_seconds = data.get("retry_after_seconds", 0)
+                
+                return {
+                    "status": "error",
+                    "blocked": True,
+                    "message": mensaje_error,
+                    "retry_after_seconds": retry_seconds
+                }
+
+            return {
+                "status": "error",
+                "message": data.get("error") or data.get("message") or f"Error en servicio OTP ({response.status_code})"
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {"status": "error", "message": f"Error de conexión con el servicio OTP: {str(e)}"}
+
+    def validar_codigo(self, email, codigo):
+        url = f"{self.base_url}/verify/"
+        headers = {
+            "Content-Type": "application/json",
+            "X-System-Token": self.system_token
+        }
         payload = {
             "email": email,
             "system_name": self.system_name,
@@ -63,24 +70,31 @@ class OTPService:
 
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=10)
-            
+            data = response.json() if response.content else {}
+
+            # Caso de Éxito
             if response.status_code in [200, 201]:
-                data = response.json()
-                
-                # Leemos los campos devueltos por tu microservicio OTP
                 status_val = str(data.get('status', '')).upper()
                 msg_val = str(data.get('message', '')).lower()
 
-                # Comprobamos la respuesta exacta: "VERIFIED"
-                if status_val == 'VERIFIED' or 'verificado' in msg_val:
-                    return True
-                
-                # Evaluaciones adicionales de respaldo
-                if status_val in ['OK', 'SUCCESS', 'TRUE'] or data.get('valid') is True:
-                    return True
+                if status_val in ['VERIFIED', 'OK', 'SUCCESS'] or 'verificado' in msg_val:
+                    return {"valid": True, "status": "VERIFIED"}
 
-            return False
-            
+            # Caso de Bloqueo (403 Forbidden o status == 'BLOCKED')
+            if response.status_code == 403 or data.get('status') == 'BLOCKED':
+                return {
+                    "valid": False,
+                    "blocked": True,
+                    "status": "BLOCKED",
+                    "message": data.get('error') or data.get('message') or "El correo ha sido bloqueado por reintentos fallidos."
+                }
+
+            # Caso de Código Incorrecto estándar
+            return {
+                "valid": False,
+                "blocked": False,
+                "message": data.get('error') or data.get('message') or "Código OTP inválido o expirado."
+            }
+
         except requests.exceptions.RequestException as e:
-            print(f"Error de conexión en validar_codigo: {e}")
-            return False
+            return {"valid": False, "blocked": False, "message": f"Error de conexión: {str(e)}"}

@@ -39,47 +39,33 @@ class CrearTransaccionAPIView(APIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
+otp_service = OTPService()
+
 class SolicitarOTPAPIView(APIView):
     def post(self, request, *args, **kwargs):
-        serializer = OTPSolicitarSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        uuid_trans = serializer.validated_data['uuid_transaccion']
+        uuid_trans = request.data.get('uuid_transaccion')
         transaccion = get_object_or_404(TransaccionFirma, uuid=uuid_trans)
 
-        # Invocamos el servicio con el email y nombre del firmante
         respuesta_otp = otp_service.solicitar_codigo(
-            email=transaccion.email_firmante,
-            nombre=transaccion.nombre_firmante
+            email=transaccion.email_firmante, 
+            nombre_firmante=transaccion.nombre_firmante
         )
 
-        # Si devolvió una cadena de texto, capturamos el error
-        if isinstance(respuesta_otp, str):
-            mensaje_error = "El servicio de OTP no está disponible."
-            if '{"error":' in respuesta_otp:
-                try:
-                    json_part = respuesta_otp.split(' - ')[1]
-                    mensaje_error = json.loads(json_part).get('error', mensaje_error)
-                except Exception:
-                    mensaje_error = respuesta_otp
-
+        if respuesta_otp.get("status") == "error":
             return Response({
                 "status": "error",
-                "message": mensaje_error
-            }, status=status.HTTP_400_BAD_REQUEST)
+                "valid": False,
+                "message": respuesta_otp.get("message"),  # <-- "El correo está temporalmente bloqueado por 2 minuto(s) más."
+                "retry_after_seconds": respuesta_otp.get("retry_after_seconds")
+            }, status=status.HTTP_403_FORBIDDEN if respuesta_otp.get("blocked") else status.HTTP_400_BAD_REQUEST)
 
         return Response({
             "status": "success",
-            "message": "Código OTP solicitado correctamente",
-            "data": respuesta_otp
+            "message": "Código OTP enviado correctamente"
         }, status=status.HTTP_200_OK)
 
 
 class ValidarOTPAPIView(APIView):
-    """
-    POST: Valida el código OTP utilizando el microservicio externo.
-    """
     def post(self, request, *args, **kwargs):
         serializer = OTPValidarSerializer(data=request.data)
         if not serializer.is_valid():
@@ -89,14 +75,14 @@ class ValidarOTPAPIView(APIView):
         codigo = serializer.validated_data['otp_code']
         transaccion = get_object_or_404(TransaccionFirma, uuid=uuid_trans)
 
-        # Consumimos la validación con la clave 'otp' hacia /verify/
-        es_valido = otp_service.validar_codigo(
+        # Invocamos la validación en el microservicio OTP
+        respuesta_otp = otp_service.validar_codigo(
             email=transaccion.email_firmante, 
             codigo=codigo
         )
 
-        if es_valido:
-            # Guardamos la autorización en la sesión
+        # Si la validación fue exitosa
+        if isinstance(respuesta_otp, dict) and respuesta_otp.get("valid"):
             sesion_key = f"otp_validado_{transaccion.uuid}"
             request.session[sesion_key] = True
             request.session.modified = True
@@ -107,8 +93,20 @@ class ValidarOTPAPIView(APIView):
                 "message": "Código OTP validado correctamente."
             }, status=status.HTTP_200_OK)
 
+        # SI EL USUARIO O CORREO ESTÁ BLOQUEADO POR REINTENTOS FALLIDOS (HTTP 403 / BLOCKED)
+        if isinstance(respuesta_otp, dict) and (respuesta_otp.get("status") == "BLOCKED" or respuesta_otp.get("blocked")):
+            return Response({
+                "status": "error",
+                "valid": False,
+                "blocked": True,
+                "message": respuesta_otp.get("message") or respuesta_otp.get("error") or "El correo ha sido bloqueado por superar el número de intentos permitidos."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Error estándar por código incorrecto
+        mensaje_error = respuesta_otp.get("message") if isinstance(respuesta_otp, dict) else "Código OTP inválido o expirado."
         return Response({
             "status": "error",
             "valid": False,
-            "message": "Código OTP inválido o expirado."
+            "blocked": False,
+            "message": mensaje_error
         }, status=status.HTTP_400_BAD_REQUEST)

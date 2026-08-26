@@ -11,6 +11,10 @@ class TransaccionFirma(models.Model):
     estado = models.CharField(max_length=20, default='PENDIENTE') # PENDIENTE, FIRMADO
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
+    pagina_firma = models.IntegerField(default=1, verbose_name="Página de Firma")
+    pos_x = models.FloatField(default=100.0, verbose_name="Coordenada X (puntos PDF)")
+    pos_y = models.FloatField(default=100.0, verbose_name="Coordenada Y (puntos PDF)")
+
     def __str__(self):
         return f"{self.id_documento_externo} - {self.nombre_firmante}"
 

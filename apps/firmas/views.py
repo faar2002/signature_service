@@ -29,18 +29,49 @@ def firmar_view(request, uuid_firma):
     sesion_key = f"otp_validado_{transaccion.uuid}"
     otp_validado = request.session.get(sesion_key, False)
 
+    # 1. Verificación previa de estado de firmante / correo
+    firmante_bloqueado = False
+    mensaje_bloqueo = ""
+
+    if hasattr(otp_service, 'verificar_estado_correo'):
+        try:
+            estado_firmante = otp_service.verificar_estado_correo(transaccion.email_firmante)
+            if estado_firmante and estado_firmante.get("blocked"):
+                firmante_bloqueado = True
+                mensaje_bloqueo = estado_firmante.get("message", "El usuario o correo ingresado se encuentra bloqueado.")
+        except Exception as e:
+            # Si ocurre algún fallo puntual al verificar estado, continua sin bloquear la vista render
+            pass
+
+    # 2. Procesamiento de Peticiones POST (Guardado/Estampado)
     if request.method == 'POST' and 'metodo_firma' in request.POST:
+        if firmante_bloqueado:
+            return JsonResponse({
+                'status': 'error',
+                'message': mensaje_bloqueo or 'Acceso denegado: El usuario se encuentra bloqueado.'
+            }, status=403)
+
         metodo = request.POST.get('metodo_firma')
+
+        # Capturar la posición enviada desde el frontend
+        try:
+            transaccion.pagina_firma = int(request.POST.get('pagina_firma', 1))
+            transaccion.pos_x = float(request.POST.get('pos_x', 100.0))
+            transaccion.pos_y = float(request.POST.get('pos_y', 100.0))
+        except (ValueError, TypeError):
+            transaccion.pagina_firma = 1
+            transaccion.pos_x = 100.0
+            transaccion.pos_y = 100.0
+
+        firma_archivo = None
 
         if metodo == 'texto':
             texto_nombre = request.POST.get('texto_nombre', transaccion.nombre_firmante)
             estilo = request.POST.get('estilo_fuente', 'cursiva')
-            
-            # Generamos la firma tipográfica con la fuente elegida
             img_buffer = generar_imagen_firma_texto(texto_nombre, estilo_fuente=estilo)
             firma_archivo = ContentFile(img_buffer.read(), name=f"firma_{transaccion.uuid}.png")
 
-        else: # metodo == 'dibujo'
+        elif metodo == 'dibujo':
             data_url = request.POST.get('base64_image')
             if not data_url or ';base64,' not in data_url:
                 return JsonResponse({'status': 'error', 'message': 'Firma dibujada inválida'}, status=400)
@@ -48,7 +79,16 @@ def firmar_view(request, uuid_firma):
             _, imgstr = data_url.split(';base64,')
             firma_archivo = ContentFile(base64.b64decode(imgstr), name=f"firma_{transaccion.uuid}.png")
 
-        # Estampar la firma generada en el PDF
+        elif metodo == 'solo_leyenda':
+            firma_archivo = None
+
+        else:
+            return JsonResponse({'status': 'error', 'message': 'Método de firma no soportado'}, status=400)
+
+        # Guardar coordenadas en la base de datos
+        transaccion.save()
+
+        # Estampar la firma / leyenda en el PDF
         signer = PDFSignerService(transaccion)
         ruta_relativa_pdf = signer.estampar_firma(firma_archivo)
 
@@ -62,14 +102,16 @@ def firmar_view(request, uuid_firma):
             'uuid': str(transaccion.uuid)
         })
 
+    # 3. Flujo GET por Defecto: Siempre retorna una respuesta HttpResponse
     pdf_url_absoluta = request.build_absolute_uri(transaccion.pdf_original.url) if transaccion.pdf_original else ""
 
     return render(request, 'firmas/firmar.html', {
         'transaccion': transaccion,
         'otp_validado': otp_validado,
-        'pdf_url_absoluta': pdf_url_absoluta
+        'pdf_url_absoluta': pdf_url_absoluta,
+        'firmante_bloqueado': firmante_bloqueado,
+        'mensaje_bloqueo': mensaje_bloqueo
     })
-
 
 def exito_view(request, uuid_firma):
     """

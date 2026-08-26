@@ -12,8 +12,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Alex+Brush&family=Dancing+Script:wght@600&family=Great+Vibes&family=Montserrat:ital,wght@1,600&display=swap" rel="stylesheet">
 
+    <!-- SignaturePad JS -->
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
     <script src="{% static 'js/transacciones.js' %}"></script>
+
+    <!-- PDF.js desde CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
 
     <style>
         .font-preview {
@@ -43,12 +50,83 @@
             border-radius: 6px;
             cursor: pointer;
         }
+
+        #pdf-container-click {
+            position: relative;
+            width: 100%;
+            min-height: 540px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: auto;
+            background: #525659;
+            text-align: center;
+        }
+
+        #pdf-render-canvas {
+            display: inline-block;
+            margin: 15px 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+            border-radius: 4px;
+        }
+
+        #box-firma-preview {
+            position: absolute;
+            width: 120px;
+            height: 40px;
+            border: 2px dashed #0f196e;
+            background: rgba(15, 25, 110, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: #0f196e;
+            top: 50px;
+            left: 50px;
+            pointer-events: none;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            backdrop-filter: blur(2px);
+            z-index: 20;
+        }
+
+        /* Capa transparente de posicionamiento por demanda */
+        #pdf-overlay {
+            position: absolute;
+            z-index: 10;
+            display: none;
+            background: rgba(15, 25, 110, 0.08);
+            cursor: crosshair;
+            border-radius: 4px;
+        }
+
+        #pdf-overlay.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
+{% csrf_token %}
 
-<div class="dashboard-container" style="max-width: 800px;" data-otp-validado="{{ otp_validado|yesno:'true,false' }}">
+<div class="dashboard-container" style="max-width: 850px;" data-otp-validado="{{ otp_validado|yesno:'true,false' }}">
     
+    <!-- PANTALLA DE ERROR SI EL CORREO/USUARIO ESTÁ BLOQUEADO (SERVER SIDE) -->
+    {% if firmante_bloqueado %}
+    <div class="card-table" style="padding: 30px; text-align: center; border-top: 4px solid #ef4444; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+        <h2 style="color: #dc2626; margin-bottom: 12px; font-size: 1.3rem;">⛔ Acceso Restringido</h2>
+        
+        <div style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 15px; border-radius: 8px; margin: 15px 0; font-size: 1.05rem; font-weight: 500; line-height: 1.4;">
+            {{ mensaje_bloqueo|default:"El correo o usuario se encuentra bloqueado temporalmente." }}
+        </div>
+
+        <p style="font-size: 0.9rem; color: #64748b; margin-top: 10px;">
+            Firmante: <strong>{{ transaccion.nombre_firmante }}</strong> ({{ transaccion.email_firmante }})
+        </p>
+        <a href="/" class="btn btn-secondary" style="margin-top: 15px; display: inline-block; padding: 10px 20px;">Volver al Inicio</a>
+    </div>
+
+    {% else %}
+
     <!-- PASO 1: VALIDACIÓN DE CÓDIGO OTP -->
     <div id="paso-otp" class="otp-card" {% if otp_validado %}style="display: none;"{% endif %}>
         <h2>Verificación de Identidad</h2>
@@ -65,40 +143,64 @@
         </form>
     </div>
 
-    <!-- PASO 2: LIENZO DE FIRMA Y VISOR DE PDF -->
+    <!-- PASO 2: POSICIONAMIENTO, LIENZO Y VISOR PDF.JS -->
     <div id="paso-firma" {% if not otp_validado %}style="display: none;"{% endif %}>
         <div class="header-title" style="margin-bottom: 20px;">
             <h2>Firma de Documento</h2>
             <p>Firmante: <strong>{{ transaccion.nombre_firmante }}</strong> | Doc: <strong>{{ transaccion.id_documento_externo }}</strong></p>
         </div>
 
-        <!-- Visor de PDF con iframe para evitar rechazo de conexión -->
-        <div style="width: 100%; height: 450px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-bottom: 20px; background: #f8fafc;">
-            {% if pdf_url_absoluta or transaccion.pdf_original %}
-                <iframe src="{{ pdf_url_absoluta|default:transaccion.pdf_original.url }}" width="100%" height="100%" style="border: none;">
-                    <p>Tu navegador no permite la previsualización directa. 
-                        <a href="{{ pdf_url_absoluta|default:transaccion.pdf_original.url }}" target="_blank">Abrir PDF original</a>.
-                    </p>
-                </iframe>
-            {% else %}
-                <p style="text-align: center; padding-top: 200px; color: var(--text-muted);">No se encontró el archivo PDF original.</p>
-            {% endif %}
+        <!-- CONTENEDOR DE SELECCIÓN DE PÁGINA Y ACTIVACIÓN DE UBICACIÓN -->
+        <div style="background: #f1f5f9; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid var(--border-color);">
+            <div style="display: flex; gap: 15px; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap;">
+                
+                <!-- Navegación entre Páginas Nativas de PDF.js -->
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <label><strong>Página:</strong></label>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="cambiarPaginaPDFjs(-1)">◀ Ant</button>
+                    <span style="font-weight: bold; font-size: 0.95rem;">
+                        <span id="num-pagina-actual">1</span> / <span id="total-paginas">1</span>
+                    </span>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="cambiarPaginaPDFjs(1)">Sig ▶</button>
+                </div>
+
+                <!-- Botón de Activación del Fijado de Firma -->
+                <button type="button" id="btnActivarPosicion" class="btn btn-secondary btn-sm" onclick="toggleModoPosicion()">
+                    📍 Activar Fijado de Firma
+                </button>
+            </div>
+
+            <!-- VISOR PDF RENDERIZADO EN CANVAS -->
+            <div id="pdf-container-click">
+                {% if pdf_url_absoluta or transaccion.pdf_original %}
+                    <canvas id="pdf-render-canvas"></canvas>
+                {% else %}
+                    <p style="text-align: center; padding-top: 200px; color: var(--text-muted);">No se encontró el archivo PDF original.</p>
+                {% endif %}
+
+                <!-- Capa captura de clics ajustada dinámicamente al Canvas -->
+                <div id="pdf-overlay"></div>
+
+                <!-- Marcador de posición -->
+                <div id="box-firma-preview">
+                    ✒️ Firma Aquí
+                </div>
+            </div>
         </div>
 
-        <!-- TARJETA DE FIRMA (DIBUJO O TIPOGRAFÍA) -->
+        <!-- TARJETA DE MÉTODO DE FIRMA -->
         <div class="card-table" style="padding: 20px;">
-            
-            <!-- Selector de Modos -->
             <div style="display: flex; gap: 10px; margin-bottom: 20px;">
                 <button type="button" class="btn btn-primary btn-tab" id="btnTabDibujo" onclick="toggleModo('dibujo')">✏️ Dibujar Trazo</button>
                 <button type="button" class="btn btn-secondary btn-tab" id="btnTabTexto" onclick="toggleModo('texto')">🔤 Escribir Nombre</button>
+                <button type="button" class="btn btn-secondary btn-tab" id="btnTabSoloLeyenda" onclick="toggleModo('solo_leyenda')">📄 Solo Leyenda</button>
             </div>
 
-            <!-- MODO 1: DIBUJO A MANO ALZADA -->
+            <!-- MODO 1: DIBUJO EN CANVAS -->
             <div id="sec-dibujo" style="text-align: center;">
                 <p style="margin-top: 0; color: var(--text-muted);">Dibuje su firma en el recuadro a continuación:</p>
                 <div style="display: inline-block; border: 2px dashed var(--border-color); border-radius: 8px; background: white;">
-                    <canvas id="signature-pad" width="500" height="180"></canvas>
+                    <canvas id="signature-pad" width="500" height="160"></canvas>
                 </div>
                 <div style="margin-top: 10px;">
                     <button type="button" id="btnClear" class="btn btn-secondary btn-sm">Limpiar Trazo</button>
@@ -122,57 +224,248 @@
                     </select>
                 </div>
 
-                <!-- Previsualización de Firma en Vivo -->
                 <div id="preview-firma" class="font-preview font-cursiva">
                     {{ transaccion.nombre_firmante }}
                 </div>
             </div>
-
+            <!-- MODO 3: SOLO LEYENDA DIGITAL -->
+            <div id="sec-solo-leyenda" style="display: none; text-align: left; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px dashed var(--border-color);">
+                <p style="margin: 0 0 10px 0; color: var(--text-muted); font-size: 0.9rem;">
+                    Se estampará únicamente el bloque de validación digital sin trazo o imagen gráfica:
+                </p>
+                <div style="font-family: monospace; font-size: 0.85rem; color: #0f196e; background: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #cbd5e1;">
+                    <strong>Firmado digitalmente por:</strong> {{ transaccion.nombre_firmante }}<br>
+                    <strong>ID Doc:</strong> {{ transaccion.id_documento_externo }}<br>
+                    <strong>UUID:</strong> {{ transaccion.uuid }}
+                </div>
+            </div>
             <div style="margin-top: 25px; text-align: center;">
                 <button type="button" id="btnEstampar" class="btn btn-primary" style="width: 100%; font-size: 1.1rem; padding: 12px;">Estampar Firma en PDF</button>
             </div>
         </div>
     </div>
 
+    {% endif %}
+
 </div>
 
 <script>
     const uuidTransaccion = "{{ transaccion.uuid }}";
-    const csrftoken = typeof getCookie === 'function' ? getCookie('csrftoken') : '';
     const otpValidado = document.querySelector('.dashboard-container').dataset.otpValidado === 'true';
+    const pdfBaseUrl = "{{ pdf_url_absoluta|default:transaccion.pdf_original.url }}";
 
+    // --- VARIABLES DE ESTADO Y FIRMA ---
     let modoActual = 'dibujo';
+    let modoPosicionActivo = false;
     let signaturePad = null;
+    
+    const boxWidth = 120;
+    const boxHeight = 40;
 
-    // Alternar entre dibujo y texto
-    function toggleModo(modo) {
-        modoActual = modo;
-        if (modo === 'dibujo') {
-            document.getElementById('sec-dibujo').style.display = 'block';
-            document.getElementById('sec-texto').style.display = 'none';
-            document.getElementById('btnTabDibujo').className = 'btn btn-primary btn-tab';
-            document.getElementById('btnTabTexto').className = 'btn btn-secondary btn-tab';
-            initSignaturePad();
-        } else {
-            document.getElementById('sec-dibujo').style.display = 'none';
-            document.getElementById('sec-texto').style.display = 'block';
-            document.getElementById('btnTabDibujo').className = 'btn btn-secondary btn-tab';
-            document.getElementById('btnTabTexto').className = 'btn btn-primary btn-tab';
-            actualizarPreview();
+    let posXPDF = 100;
+    let posYPDF = 100;
+
+    // --- VARIABLES DE PDF.JS ---
+    let pdfDoc = null;
+    let pageNum = 1;
+    let pageRendering = false;
+    let pageNumPending = null;
+    const scale = 1.15; // Escala óptima de renderizado
+
+    const canvasPDF = document.getElementById('pdf-render-canvas');
+    const ctxPDF = canvasPDF ? canvasPDF.getContext('2d') : null;
+    const overlay = document.getElementById('pdf-overlay');
+    const boxPreview = document.getElementById('box-firma-preview');
+    const btnActivarPosicion = document.getElementById('btnActivarPosicion');
+
+    // HELPER PARA OBTENER LA COOKIE CSRF
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // RENDERIZAR TARJETA DE BLOQUEO DE ACCESO
+    function mostrarPantallaBloqueo(mensaje) {
+        const pasoOtp = document.getElementById('paso-otp');
+        if (pasoOtp) {
+            pasoOtp.innerHTML = `
+                <div style="padding: 25px; text-align: center; background: #ffffff; border-radius: 8px; border-top: 4px solid #ef4444; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                    <h2 style="color: #dc2626; margin-bottom: 12px; font-size: 1.3rem;">⛔ Acceso Restringido</h2>
+                    
+                    <div style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 15px; border-radius: 8px; margin: 15px 0; font-size: 1.05rem; font-weight: 500; line-height: 1.4;">
+                        ${mensaje}
+                    </div>
+                    
+                    <p style="font-size: 0.9rem; color: #64748b; margin-top: 10px;">
+                        Por razones de seguridad, el proceso de firma ha sido bloqueado temporalmente.
+                    </p>
+                    
+                    <a href="/" class="btn btn-secondary" style="margin-top: 15px; display: inline-block; padding: 10px 20px;">Volver al Inicio</a>
+                </div>
+            `;
         }
     }
 
-    // Actualizar vista previa del texto
+    // --- CARGA Y RENDERIZADO CON PDF.JS ---
+    if (pdfBaseUrl && canvasPDF) {
+        pdfjsLib.getDocument(pdfBaseUrl).promise.then(function(pdfDoc_) {
+            pdfDoc = pdfDoc_;
+            document.getElementById('total-paginas').textContent = pdfDoc.numPages;
+            renderPage(pageNum);
+        }).catch(function(err) {
+            console.error("Error cargando PDF con PDF.js:", err);
+        });
+    }
+
+    function renderPage(num) {
+        pageRendering = true;
+        pdfDoc.getPage(num).then(function(page) {
+            const viewport = page.getViewport({ scale: scale });
+            canvasPDF.height = viewport.height;
+            canvasPDF.width = viewport.width;
+
+            // Sincronizar overlay transparente exactamente con el Canvas
+            if (overlay) {
+                overlay.style.width = viewport.width + 'px';
+                overlay.style.height = viewport.height + 'px';
+                overlay.style.left = canvasPDF.offsetLeft + 'px';
+                overlay.style.top = canvasPDF.offsetTop + 'px';
+            }
+
+            const renderContext = {
+                canvasContext: ctxPDF,
+                viewport: viewport
+            };
+            const renderTask = page.render(renderContext);
+
+            renderTask.promise.then(function() {
+                pageRendering = false;
+                if (pageNumPending !== null) {
+                    renderPage(pageNumPending);
+                    pageNumPending = null;
+                }
+            });
+        });
+
+        document.getElementById('num-pagina-actual').textContent = num;
+    }
+
+    function queueRenderPage(num) {
+        if (pageRendering) {
+            pageNumPending = num;
+        } else {
+            renderPage(num);
+        }
+    }
+
+    function cambiarPaginaPDFjs(delta) {
+        if (!pdfDoc) return;
+        if (pageNum + delta < 1) {
+            pageNum = 1;
+        } else if (pageNum + delta > pdfDoc.numPages) {
+            pageNum = pdfDoc.numPages;
+        } else {
+            pageNum += delta;
+        }
+        queueRenderPage(pageNum);
+    }
+
+    // ACTIVAR / DESACTIVAR CAPA DE POSICIONAMIENTO
+    function toggleModoPosicion() {
+        modoPosicionActivo = !modoPosicionActivo;
+        if (modoPosicionActivo) {
+            overlay.classList.add('active');
+            btnActivarPosicion.className = 'btn btn-primary btn-sm';
+            btnActivarPosicion.textContent = '🎯 Clic en el PDF para Fijar';
+        } else {
+            overlay.classList.remove('active');
+            btnActivarPosicion.className = 'btn btn-secondary btn-sm';
+            btnActivarPosicion.textContent = '📍 Activar Fijado de Firma';
+        }
+    }
+
+    // CAPTURA DE CLIC SOBRE OVERLAY Y MAPEADO A PUNTOS PDF
+    if (overlay) {
+        overlay.onclick = function(e) {
+            const rect = overlay.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // Centrar el marcador gráfico sobre el clic
+            const leftPos = Math.max(0, Math.min(rect.width - boxWidth, clickX - (boxWidth / 2)));
+            const topPos = Math.max(0, Math.min(rect.height - boxHeight, clickY - (boxHeight / 2)));
+
+            boxPreview.style.left = (canvasPDF.offsetLeft + leftPos) + 'px';
+            boxPreview.style.top = (canvasPDF.offsetTop + topPos) + 'px';
+
+            // Convertir píxeles de pantalla a Puntos PDF (612 x 792 ptos)
+            pdfDoc.getPage(pageNum).then(function(page) {
+                const unscaledViewport = page.getViewport({ scale: 1.0 });
+                
+                posXPDF = Math.round((clickX / rect.width) * unscaledViewport.width);
+                posYPDF = Math.round(((rect.height - clickY) / rect.height) * unscaledViewport.height);
+            });
+
+            toggleModoPosicion();
+        };
+    }
+
+    // MÓDULOS DE FIRMA
+    function toggleModo(modo) {
+        modoActual = modo;
+        const secDibujo = document.getElementById('sec-dibujo');
+        const secTexto = document.getElementById('sec-texto');
+        const secSoloLeyenda = document.getElementById('sec-solo-leyenda');
+
+        const btnDibujo = document.getElementById('btnTabDibujo');
+        const btnTexto = document.getElementById('btnTabTexto');
+        const btnSoloLeyenda = document.getElementById('btnTabSoloLeyenda');
+
+        // Ocultar todas las secciones
+        secDibujo.style.display = 'none';
+        secTexto.style.display = 'none';
+        secSoloLeyenda.style.display = 'none';
+
+        // Resetear estilos de botones
+        btnDibujo.className = 'btn btn-secondary btn-tab';
+        btnTexto.className = 'btn btn-secondary btn-tab';
+        btnSoloLeyenda.className = 'btn btn-secondary btn-tab';
+
+        if (modo === 'dibujo') {
+            secDibujo.style.display = 'block';
+            btnDibujo.className = 'btn btn-primary btn-tab';
+            initSignaturePad();
+        } else if (modo === 'texto') {
+            secTexto.style.display = 'block';
+            btnTexto.className = 'btn btn-primary btn-tab';
+            actualizarPreview();
+        } else if (modo === 'solo_leyenda') {
+            secSoloLeyenda.style.display = 'block';
+            btnSoloLeyenda.className = 'btn btn-primary btn-tab';
+        }
+    }
+
     function actualizarPreview() {
         const texto = document.getElementById('input-nombre-firma').value || 'Su Nombre Aquí';
         const estilo = document.getElementById('select-estilo').value;
         const preview = document.getElementById('preview-firma');
         
-        preview.textContent = texto;
-        preview.className = 'font-preview font-' + estilo;
+        if (preview) {
+            preview.textContent = texto;
+            preview.className = 'font-preview font-' + estilo;
+        }
     }
 
-    // Inicializar SignaturePad
     function initSignaturePad() {
         const canvas = document.getElementById('signature-pad');
         if (canvas && !signaturePad) {
@@ -181,25 +474,31 @@
         }
     }
 
-    // Generar OTP automáticamente si no está validado previamente
+    // SOLICITUD AUTOMÁTICA DE OTP AL CARGAR PÁGINA
     if (!otpValidado) {
         document.addEventListener("DOMContentLoaded", async () => {
             try {
-                await fetch('/api/v1/otp/solicitar/', {
+                const response = await fetch('/api/v1/otp/solicitar/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRFToken': csrftoken
+                        'X-CSRFToken': getCookie('csrftoken') || document.querySelector('[name=csrfmiddlewaretoken]')?.value
                     },
                     body: JSON.stringify({ uuid_transaccion: uuidTransaccion })
                 });
+
+                const data = await response.json();
+
+                if (!response.ok || data.status === 'error' || response.status === 403) {
+                    mostrarPantallaBloqueo(data.message || "El correo se encuentra temporalmente bloqueado.");
+                }
             } catch (err) {
                 console.error("Error solicitando OTP inicial:", err);
             }
         });
     }
 
-    // Manejo de Validación de OTP
+    // MANEJO DE FORMULARIO OTP
     const formOTP = document.getElementById('formOTP');
     if (formOTP) {
         formOTP.onsubmit = async function(e) {
@@ -212,7 +511,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRFToken': csrftoken
+                        'X-CSRFToken': getCookie('csrftoken') || document.querySelector('[name=csrfmiddlewaretoken]')?.value
                     },
                     body: JSON.stringify({
                         uuid_transaccion: uuidTransaccion,
@@ -226,6 +525,10 @@
                     document.getElementById('paso-otp').style.display = 'none';
                     document.getElementById('paso-firma').style.display = 'block';
                     initSignaturePad();
+                    // Forzar segundo renderizado para garantizar dimensiones de Canvas
+                    if (pdfDoc) renderPage(pageNum);
+                } else if (response.status === 403 || data.blocked || data.status === 'BLOCKED') {
+                    mostrarPantallaBloqueo(data.message || "El correo ha sido bloqueado por superar el número de intentos.");
                 } else {
                     errorBanner.style.display = 'block';
                     errorBanner.textContent = data.message || "Código inválido o expirado.";
@@ -237,61 +540,69 @@
         };
     }
 
-    if (document.getElementById('paso-firma').style.display !== 'none') {
+    if (document.getElementById('paso-firma') && document.getElementById('paso-firma').style.display !== 'none') {
         initSignaturePad();
     }
 
-    // Enviar Firma Estampada (Soporta Dibujo y Texto)
-    document.getElementById('btnEstampar').onclick = async function() {
-        const payload = new URLSearchParams();
-        payload.append('metodo_firma', modoActual);
+    // ENVIAR FIRMA AL BACKEND
+    const btnEstampar = document.getElementById('btnEstampar');
+    if (btnEstampar) {
+        btnEstampar.onclick = async function() {
+            const payload = new URLSearchParams();
+            payload.append('metodo_firma', modoActual);
+            payload.append('pagina_firma', pageNum);
+            payload.append('pos_x', posXPDF);
+            payload.append('pos_y', posYPDF);
 
-        if (modoActual === 'dibujo') {
-            if (!signaturePad || signaturePad.isEmpty()) {
-                alert("Por favor realice su firma en el recuadro.");
-                return;
+            if (modoActual === 'dibujo') {
+                if (!signaturePad || signaturePad.isEmpty()) {
+                    alert("Por favor realice su firma en el recuadro.");
+                    return;
+                }
+                payload.append('base64_image', signaturePad.toDataURL('image/png'));
+            } else if (modoActual === 'texto') {
+                const texto = document.getElementById('input-nombre-firma').value;
+                if (!texto.trim()) {
+                    alert("Por favor ingrese el nombre a estampar.");
+                    return;
+                }
+                payload.append('texto_nombre', texto);
+                payload.append('estilo_fuente', document.getElementById('select-estilo').value);
+            } else if (modoActual === 'solo_leyenda') {
+                // No requiere adjuntar imagen ni texto adicional
             }
-            payload.append('base64_image', signaturePad.toDataURL('image/png'));
-        } else {
-            const texto = document.getElementById('input-nombre-firma').value;
-            if (!texto.trim()) {
-                alert("Por favor ingrese el nombre a estampar.");
-                return;
-            }
-            payload.append('texto_nombre', texto);
-            payload.append('estilo_fuente', document.getElementById('select-estilo').value);
-        }
 
-        this.disabled = true;
-        this.textContent = "Estampando firma...";
+            this.disabled = true;
+            this.textContent = "Estampando firma...";
 
-        try {
-            const response = await fetch(`/firmar/${uuidTransaccion}/`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-CSRFToken': csrftoken
-                },
-                body: payload
-            });
+            try {
+                const response = await fetch(`/firmar/${uuidTransaccion}/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-CSRFToken': getCookie('csrftoken') || document.querySelector('[name=csrfmiddlewaretoken]')?.value
+                    },
+                    body: payload
+                });
 
-            const data = await response.json();
+                const data = await response.json();
 
-            if (response.ok && data.status === 'success') {
-                alert("¡Documento firmado exitosamente!");
-                window.location.href = `/exito/${uuidTransaccion}/`;
-            } else {
-                alert("Error al procesar la firma: " + (data.message || "Falla del servidor"));
+                if (response.ok && data.status === 'success') {
+                    alert("¡Documento firmado exitosamente!");
+                    window.location.href = `/exito/${uuidTransaccion}/`;
+                } else {
+                    alert("Error al procesar la firma: " + (data.message || "Falla del servidor"));
+                    this.disabled = false;
+                    this.textContent = "Estampando firma...";
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Error de conexión al procesar la firma.");
                 this.disabled = false;
                 this.textContent = "Estampando firma...";
             }
-        } catch (err) {
-            console.error(err);
-            alert("Error de conexión al procesar la firma.");
-            this.disabled = false;
-            this.textContent = "Estampando firma...";
-        }
-    };
+        };
+    }
 </script>
 
 </body>
